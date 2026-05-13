@@ -1,0 +1,683 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Телепорт: прогресс-бар кулдауна + радужная шкала</title>
+<style>
+  * { box-sizing: border-box; user-select: none; -webkit-tap-highlight-color: transparent; margin: 0; padding: 0; }
+  body {
+    background: radial-gradient(circle at 20% 30%, #0b1120, #03060c);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; font-family: 'Segoe UI', 'Courier New', monospace;
+    padding: 20px;
+  }
+  .game-wrapper {
+    background: #01020a99; backdrop-filter: blur(2px);
+    border-radius: 2rem; padding: 1rem; box-shadow: 0 25px 40px rgba(0,0,0,0.7);
+    border: 1px solid #2c416e;
+    position: relative;
+  }
+  canvas {
+    display: block; margin: 0 auto; border-radius: 20px;
+    box-shadow: 0 0 0 3px #1f2c44, 0 12px 28px black;
+    background: #0d1222;
+  }
+  .ui-panel {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 18px; gap: 18px; flex-wrap: wrap;
+    background: #070b14aa; backdrop-filter: blur(6px);
+    border-radius: 60px; padding: 8px 22px; border: 1px solid #2f4370;
+  }
+  .status {
+    display: flex; gap: 24px; font-weight: bold; font-size: 0.85rem;
+    background: #00000070; padding: 5px 18px; border-radius: 40px;
+    color: #d6ecff; font-family: monospace;
+  }
+  .status span { color: #ffd48a; margin-left: 6px; background: #00000066; padding: 0 8px; border-radius: 20px; }
+  .legend {
+    display: flex; gap: 12px; font-size: 0.7rem;
+    background: #00000070; padding: 5px 18px; border-radius: 32px;
+  }
+  kbd {
+    background: #1f2c3f; border-radius: 6px; padding: 2px 8px; font-weight: bold;
+    color: #f5cb5c; margin: 0 3px; font-size: 0.7rem; box-shadow: inset 0 1px 0 #5a7faa, 0 1px 2px black;
+  }
+  .dir-badge-group {
+    display: flex; gap: 10px; background: #00000055; border-radius: 48px;
+    padding: 4px 18px; backdrop-filter: blur(4px);
+  }
+  .dir-badge {
+    font-size: 11px; padding: 3px 12px; border-radius: 36px; border: 1px solid #4a6088;
+    background: #101826; color: #c0d4ff; transition: all 0.07s linear; font-weight: bold;
+  }
+  .dir-badge.active {
+    border-color: #7aecff; background: #2a5478; color: white; box-shadow: 0 0 10px #3fb0ff;
+  }
+  button {
+    background: #2a4370; border: none; color: white; font-weight: bold; padding: 5px 18px;
+    border-radius: 40px; font-family: inherit; font-size: 0.75rem; cursor: pointer;
+    transition: 0.1s; box-shadow: 0 1px 4px black;
+  }
+  button:hover { background: #3e6a9c; transform: scale(0.96); }
+  .cooldown-slider {
+    background: #000000aa; border-radius: 40px; padding: 6px 16px;
+    display: flex; align-items: center; gap: 15px;
+    backdrop-filter: blur(4px);
+  }
+  .cooldown-slider label {
+    font-size: 0.75rem; font-weight: bold; color: #bbddff;
+  }
+  input[type="range"] {
+    width: 160px; height: 4px; -webkit-appearance: none;
+    background: linear-gradient(90deg, #ff3366, #33ff66, #33aaff);
+    border-radius: 5px; outline: none;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 14px; height: 14px;
+    background: white; border-radius: 50%; cursor: pointer;
+    box-shadow: 0 0 6px cyan;
+  }
+  #cdValueUI {
+    min-width: 70px; background: #00000088; padding: 2px 10px;
+    border-radius: 30px; font-family: monospace; font-weight: bold;
+    color: #ffd966;
+  }
+  #flashFX {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; opacity: 0; transition: opacity 0.06s ease-out; z-index: 999;
+  }
+</style>
+</head>
+<body>
+<div id="flashFX"></div>
+<div class="game-wrapper">
+  <canvas id="gameCanvas" width="880" height="520"></canvas>
+  <div class="ui-panel">
+    <div class="status">
+      ⏱️ кулдаун: <span id="cdValueText">0.00</span> сек &nbsp;|&nbsp; 📏 луч: <span id="rayDistSpan">—</span> px
+    </div>
+    <div class="dir-badge-group">
+      <div class="dir-badge" id="bdW">▲ W</div>
+      <div class="dir-badge" id="bdA">◀ A</div>
+      <div class="dir-badge" id="bdS">▼ S</div>
+      <div class="dir-badge" id="bdD">▶ D</div>
+    </div>
+    <div class="legend">
+      🧙 <kbd>WASD</kbd> — сначала прижаться к стене, затем (удерживая) пройти сквозь<br>
+      🎮 <kbd>←→</kbd> ходьба &nbsp;|&nbsp; <kbd>↑</kbd> или <kbd>Пробел</kbd> прыжок
+    </div>
+    <button id="resetPosBtn">⟳ сброс</button>
+  </div>
+  
+  <div style="margin-top: 16px; display: flex; justify-content: center;">
+    <div class="cooldown-slider">
+      <label>⚡ ЗАДЕРЖКА ТЕЛЕПОРТА (мс):</label>
+      <input type="range" id="cooldownSlider" min="0" max="1000" step="10" value="450">
+      <span id="cdValueUI">450 мс</span>
+    </div>
+  </div>
+  <div style="text-align: center; margin-top: 8px; font-size: 10px; color:#8aa4cc;">
+    🎨 ЛЕВЫЙ ВЕРХНИЙ УГОЛ — радужный прогресс-бар кулдауна (сколько осталось до следующего телепорта).
+  </div>
+</div>
+
+<script>
+  (function(){
+    // ---------- МИР И ИГРОК ----------
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+
+    const GRAVITY = 0.52;
+    const JUMP_FORCE = -11.8;
+    const WALK_SPEED = 3.6;
+    
+    let TELEPORT_COOLDOWN_MS = 450;
+    
+    const PLAYER = {
+      x: 700, y: 420, w: 32, h: 38,
+      vx: 0, vy: 0,
+      onGround: false,
+      lastTeleportTime: 0
+    };
+
+    const blocks = [
+      { x: 0,   y: 490, w: 880, h: 35 },
+      { x: -12, y: 0,   w: 12,  h: 550 },
+      { x: 880, y: 0,   w: 12,  h: 550 },
+      { x: -20, y: -10, w: 920, h: 14 },
+      { x: 80,  y: 410, w: 65,  h: 80 },
+      { x: 210, y: 340, w: 85,  h: 150 },
+      { x: 340, y: 380, w: 55,  h: 110 },
+      { x: 460, y: 250, w: 75,  h: 240 },
+      { x: 590, y: 430, w: 70,  h: 60 },
+      { x: 730, y: 320, w: 60,  h: 170 },
+      { x: 130, y: 270, w: 110, h: 18 },
+      { x: 320, y: 210, w: 80,  h: 18 },
+      { x: 540, y: 180, w: 95,  h: 18 },
+      { x: 760, y: 220, w: 70,  h: 18 },
+      { x: 630, y: 140, w: 18,  h: 110 },
+      { x: 200, y: 110, w: 18,  h: 100 },
+      { x: 430, y: 80,  w: 18,  h: 90  },
+    ];
+
+    const keys = {
+      ArrowLeft: false, ArrowRight: false,
+      KeyW: false, KeyA: false, KeyS: false, KeyD: false,
+      Space: false, ArrowUp: false
+    };
+
+    document.addEventListener('keydown', (e) => {
+      const code = e.code;
+      if (keys.hasOwnProperty(code)) {
+        keys[code] = true;
+        e.preventDefault();
+      }
+      if (code === 'Space' || code === 'ArrowUp' || code === 'ArrowLeft' || code === 'ArrowRight') e.preventDefault();
+    });
+    document.addEventListener('keyup', (e) => {
+      const code = e.code;
+      if (keys.hasOwnProperty(code)) keys[code] = false;
+    });
+
+    // Raycast
+    function raycastFromCenter(dx, dy, maxDist = 800) {
+      const originX = PLAYER.x + PLAYER.w / 2;
+      const originY = PLAYER.y + PLAYER.h / 2;
+      let closestDist = maxDist + 1;
+      let closestBlock = null;
+      let hitPoint = { x: originX + dx * maxDist, y: originY + dy * maxDist };
+
+      for (const b of blocks) {
+        let tmin = -Infinity, tmax = Infinity;
+        if (dx !== 0) {
+          const tx1 = (b.x - originX) / dx;
+          const tx2 = (b.x + b.w - originX) / dx;
+          tmin = Math.max(tmin, Math.min(tx1, tx2));
+          tmax = Math.min(tmax, Math.max(tx1, tx2));
+        } else {
+          if (originX < b.x || originX > b.x + b.w) continue;
+        }
+        if (dy !== 0) {
+          const ty1 = (b.y - originY) / dy;
+          const ty2 = (b.y + b.h - originY) / dy;
+          tmin = Math.max(tmin, Math.min(ty1, ty2));
+          tmax = Math.min(tmax, Math.max(ty1, ty2));
+        } else {
+          if (originY < b.y || originY > b.y + b.h) continue;
+        }
+        if (tmax >= tmin && tmin > 0.01 && tmin < closestDist) {
+          closestDist = tmin;
+          closestBlock = b;
+          hitPoint = { x: originX + dx * tmin, y: originY + dy * tmin };
+        }
+      }
+
+      if (closestBlock && closestDist <= maxDist) {
+        return { hit: true, dist: closestDist, block: closestBlock, hitX: hitPoint.x, hitY: hitPoint.y };
+      }
+      return { hit: false, dist: maxDist, block: null, hitX: originX + dx * maxDist, hitY: originY + dy * maxDist };
+    }
+
+    // ---------- ЛОГИКА: СНАЧАЛА ПРИЖАТЬСЯ, ПОТОМ СКВОЗЬ ----------
+    const TIGHT_GAP = 2;      // зазор при прижимании
+    const THROUGH_GAP = 4;    // зазор после прохождения сквозь
+
+    function isTouchingBlock(block, dx, dy) {
+      if (dx === -1) {
+        return Math.abs(PLAYER.x - (block.x + block.w)) <= TIGHT_GAP + 2;
+      } else if (dx === 1) {
+        return Math.abs((PLAYER.x + PLAYER.w) - block.x) <= TIGHT_GAP + 2;
+      } else if (dy === -1) {
+        return Math.abs(PLAYER.y - (block.y + block.h)) <= TIGHT_GAP + 2;
+      } else if (dy === 1) {
+        return Math.abs((PLAYER.y + PLAYER.h) - block.y) <= TIGHT_GAP + 2;
+      }
+      return false;
+    }
+
+    function tryTeleportProgressive(dx, dy, directionKey) {
+      const now = performance.now();
+      if (now - PLAYER.lastTeleportTime < TELEPORT_COOLDOWN_MS) return false;
+
+      const ray = raycastFromCenter(dx, dy, 800);
+      if (!ray.hit) return false;
+
+      const block = ray.block;
+      let newX = PLAYER.x;
+      let newY = PLAYER.y;
+      let isThrough = false;
+
+      const alreadyTouching = isTouchingBlock(block, dx, dy);
+
+      if (!alreadyTouching) {
+        // Прижимаем к блоку
+        if (dx === -1) newX = block.x + block.w + TIGHT_GAP;
+        else if (dx === 1) newX = block.x - PLAYER.w - TIGHT_GAP;
+        else if (dy === -1) newY = block.y + block.h + TIGHT_GAP;
+        else if (dy === 1) newY = block.y - PLAYER.h - TIGHT_GAP;
+      } else {
+        // Сквозной телепорт
+        isThrough = true;
+        if (dx === -1) newX = block.x - PLAYER.w - THROUGH_GAP;
+        else if (dx === 1) newX = block.x + block.w + THROUGH_GAP;
+        else if (dy === -1) newY = block.y - PLAYER.h - THROUGH_GAP;
+        else if (dy === 1) newY = block.y + block.h + THROUGH_GAP;
+      }
+
+      newX = Math.min(Math.max(newX, 6), W - PLAYER.w - 6);
+      newY = Math.min(Math.max(newY, 6), H - PLAYER.h - 6);
+
+      const effectColor = isThrough ? getColorForKey(directionKey) : 'rgba(255,200,100,0.8)';
+      spawnExplosionParticles(PLAYER.x + PLAYER.w/2, PLAYER.y + PLAYER.h/2, effectColor);
+      PLAYER.x = newX;
+      PLAYER.y = newY;
+      PLAYER.vx = 0;
+      PLAYER.vy = 0;
+      PLAYER.lastTeleportTime = now;
+      applyCollisionImmediate();
+      spawnExplosionParticles(PLAYER.x + PLAYER.w/2, PLAYER.y + PLAYER.h/2, effectColor);
+      doFlash(isThrough ? getFlashColorForKey(directionKey) : 'rgba(255,180,60,0.3)');
+      return true;
+    }
+
+    function applyCollisionImmediate() {
+      for (const b of blocks) {
+        const overlapX = Math.min(PLAYER.x + PLAYER.w, b.x + b.w) - Math.max(PLAYER.x, b.x);
+        const overlapY = Math.min(PLAYER.y + PLAYER.h, b.y + b.h) - Math.max(PLAYER.y, b.y);
+        if (overlapX > 0 && overlapY > 0) {
+          if (overlapX < overlapY) {
+            if (PLAYER.x < b.x) PLAYER.x = b.x - PLAYER.w;
+            else PLAYER.x = b.x + b.w;
+          } else {
+            if (PLAYER.y < b.y) PLAYER.y = b.y - PLAYER.h;
+            else PLAYER.y = b.y + b.h;
+          }
+        }
+      }
+      PLAYER.x = Math.min(Math.max(PLAYER.x, 5), W - PLAYER.w - 5);
+      PLAYER.y = Math.min(Math.max(PLAYER.y, 5), H - PLAYER.h - 5);
+    }
+
+    // Цвета для эффектов
+    function getColorForKey(key) {
+      const map = { W: 'rgba(180,120,255,0.9)', A: 'rgba(80,210,255,0.9)', S: 'rgba(255,165,60,0.9)', D: 'rgba(80,255,150,0.9)' };
+      return map[key] || '#9bc0ff';
+    }
+    function getFlashColorForKey(key) {
+      const map = { W: 'rgba(140,80,255,0.3)', A: 'rgba(40,160,255,0.3)', S: 'rgba(255,110,0,0.3)', D: 'rgba(0,220,100,0.3)' };
+      return map[key] || '#4f9fff';
+    }
+
+    // Частицы
+    let particles = [];
+    function spawnExplosionParticles(x, y, color) {
+      for (let i = 0; i < 16; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const spd = 1.2 + Math.random() * 4.2;
+        particles.push({
+          x, y, vx: Math.cos(angle)*spd, vy: Math.sin(angle)*spd,
+          life: 1, size: 2 + Math.random() * 4, color: color
+        });
+      }
+    }
+
+    function updateParticles() {
+      for (let i=0; i<particles.length; i++) {
+        const p = particles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.12;
+        p.life -= 0.025;
+        p.size *= 0.96;
+        if (p.life <= 0.02) { particles.splice(i,1); i--; }
+      }
+    }
+
+    const flashDiv = document.getElementById('flashFX');
+    function doFlash(color) {
+      flashDiv.style.backgroundColor = color;
+      flashDiv.style.opacity = '0.7';
+      setTimeout(() => flashDiv.style.opacity = '0', 80);
+    }
+
+    // ----- КОЛЛИЗИИ И ФИЗИКА -----
+    function applyCollision() {
+      PLAYER.onGround = false;
+      for (const b of blocks) {
+        const overlapX = Math.min(PLAYER.x + PLAYER.w, b.x + b.w) - Math.max(PLAYER.x, b.x);
+        const overlapY = Math.min(PLAYER.y + PLAYER.h, b.y + b.h) - Math.max(PLAYER.y, b.y);
+        if (overlapX > 0 && overlapY > 0) {
+          if (overlapX < overlapY) {
+            if (PLAYER.x < b.x) PLAYER.x = b.x - PLAYER.w;
+            else PLAYER.x = b.x + b.w;
+            PLAYER.vx = 0;
+          } else {
+            if (PLAYER.y < b.y) { PLAYER.y = b.y - PLAYER.h; PLAYER.vy = 0; PLAYER.onGround = true; }
+            else { PLAYER.y = b.y + b.h; PLAYER.vy = 0; }
+          }
+        }
+      }
+      PLAYER.x = Math.min(Math.max(PLAYER.x, 5), W - PLAYER.w - 5);
+      PLAYER.y = Math.min(Math.max(PLAYER.y, 5), H - PLAYER.h - 5);
+      if (PLAYER.y + PLAYER.h >= H - 5) PLAYER.onGround = true;
+    }
+
+    function handleMovementAndPhysics() {
+      let move = 0;
+      if (keys['ArrowLeft']) move = -WALK_SPEED;
+      if (keys['ArrowRight']) move = WALK_SPEED;
+      PLAYER.vx = move;
+      PLAYER.vy += GRAVITY;
+      PLAYER.x += PLAYER.vx;
+      PLAYER.y += PLAYER.vy;
+      applyCollision();
+
+      if ((keys['Space'] || keys['ArrowUp']) && PLAYER.onGround) {
+        PLAYER.vy = JUMP_FORCE;
+        PLAYER.onGround = false;
+      }
+    }
+
+    // ---------- ЛУЧИ И ВЫЗОВ ТЕЛЕПОРТА ----------
+    let activeRays = [];
+    function updateTeleportAndRays() {
+      activeRays = [];
+      const dirMap = [
+        { key: 'KeyW', dx: 0, dy: -1, label: 'W' },
+        { key: 'KeyA', dx: -1, dy: 0, label: 'A' },
+        { key: 'KeyS', dx: 0, dy: 1, label: 'S' },
+        { key: 'KeyD', dx: 1, dy: 0, label: 'D' },
+      ];
+      
+      let teleportDone = false;
+      for (const d of dirMap) {
+        if (keys[d.key]) {
+          const ray = raycastFromCenter(d.dx, d.dy, 800);
+          const originX = PLAYER.x + PLAYER.w/2;
+          const originY = PLAYER.y + PLAYER.h/2;
+          const color = getColorForKey(d.label);
+          
+          if (ray.hit) {
+            activeRays.push({
+              x1: originX, y1: originY,
+              x2: ray.hitX, y2: ray.hitY,
+              hit: true, color: color, dist: ray.dist, label: d.label
+            });
+            if (!teleportDone) {
+              tryTeleportProgressive(d.dx, d.dy, d.label);
+              teleportDone = true;
+            }
+          } else {
+            activeRays.push({
+              x1: originX, y1: originY,
+              x2: originX + d.dx * 90, y2: originY + d.dy * 90,
+              hit: false, color: 'rgba(190,70,70,0.5)', dist: 0, label: d.label
+            });
+          }
+        }
+      }
+    }
+
+    // Обновление UI (текст кулдауна, дистанция, бейджи)
+    function updateUI() {
+      let bestDist = null;
+      const dirCheck = [
+        { key: 'KeyW', dx: 0, dy: -1 }, { key: 'KeyA', dx: -1, dy: 0 },
+        { key: 'KeyS', dx: 0, dy: 1 }, { key: 'KeyD', dx: 1, dy: 0 }
+      ];
+      for (const d of dirCheck) {
+        if (keys[d.key]) {
+          const r = raycastFromCenter(d.dx, d.dy, 800);
+          if (r.hit) bestDist = r.dist;
+          break;
+        }
+      }
+      const raySpan = document.getElementById('rayDistSpan');
+      if (bestDist !== null) raySpan.innerText = Math.floor(bestDist) + ' px';
+      else raySpan.innerText = '—';
+
+      const now = performance.now();
+      const cdRemain = Math.max(0, TELEPORT_COOLDOWN_MS - (now - PLAYER.lastTeleportTime));
+      document.getElementById('cdValueText').innerText = (cdRemain / 1000).toFixed(2);
+      
+      const badges = { W: 'bdW', A: 'bdA', S: 'bdS', D: 'bdD' };
+      for (let [label, id] of Object.entries(badges)) {
+        const el = document.getElementById(id);
+        const keyCode = `Key${label}`;
+        if (keys[keyCode]) {
+          el.classList.add('active');
+          el.style.borderColor = getColorForKey(label);
+        } else {
+          el.classList.remove('active');
+          el.style.borderColor = '#4a6088';
+        }
+      }
+    }
+
+    // ---------- НОВАЯ РАДУЖНАЯ ШКАЛА - ПРОГРЕСС КУЛДАУНА ----------
+    function drawCooldownRainbowBar() {
+      const now = performance.now();
+      let progress = (now - PLAYER.lastTeleportTime) / TELEPORT_COOLDOWN_MS;
+      progress = Math.min(1, Math.max(0, progress)); // от 0 (только что телепорт) до 1 (готов)
+      
+      const x = 12, y = 12, w = 180, h = 20;
+      const remainingMs = Math.max(0, TELEPORT_COOLDOWN_MS - (now - PLAYER.lastTeleportTime));
+      
+      // Фон (тёмный)
+      ctx.fillStyle = '#1a1f2e';
+      ctx.fillRect(x, y, w, h);
+      
+      // Радужный градиент на всю ширину (для заполненной части)
+      const grad = ctx.createLinearGradient(x, y, x + w, y);
+      grad.addColorStop(0, '#ff3a3a');    // красный — начало перезарядки
+      grad.addColorStop(0.33, '#ffff3a');
+      grad.addColorStop(0.66, '#3aff3a');
+      grad.addColorStop(1, '#3acaff');    // синий — готовность
+      
+      // Закрашиваем прогресс
+      const fillWidth = w * progress;
+      ctx.fillStyle = grad;
+      ctx.fillRect(x, y, fillWidth, h);
+      
+      // Обводка
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(x, y, w, h);
+      
+      // Текст: сколько осталось мс
+      ctx.fillStyle = '#ffffffdd';
+      ctx.font = 'bold 10px monospace';
+      ctx.shadowBlur = 0;
+      ctx.fillText(`${Math.floor(remainingMs)} мс`, x + 5, y + 14);
+      
+      // Маркер на границе прогресса (белая черта)
+      const markerX = x + fillWidth;
+      if (fillWidth > 2 && fillWidth < w - 2) {
+        ctx.beginPath();
+        ctx.moveTo(markerX, y);
+        ctx.lineTo(markerX, y + h);
+        ctx.strokeStyle = '#ffffff';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+      
+      // Заголовок
+      ctx.fillStyle = '#bbddff';
+      ctx.font = 'bold 8px monospace';
+      ctx.fillText('КУЛДАУН →', x, y - 3);
+    }
+
+    // Отрисовка остального мира
+    function drawBlocks() {
+      for (const b of blocks) {
+        if (b.y === -10 && b.h === 14) {
+          ctx.fillStyle = '#7f8fbbaa';
+          ctx.fillRect(b.x, b.y, b.w, b.h);
+          ctx.fillStyle = '#ffffffaa';
+          ctx.font = 'bold 10px monospace';
+          ctx.fillText('ПОТОЛОК', b.x + b.w/2 - 30, b.y + 11);
+        } else {
+          ctx.fillStyle = '#2c3e66';
+          ctx.fillRect(b.x, b.y, b.w, b.h);
+        }
+        ctx.strokeStyle = '#5a72a0';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(b.x, b.y, b.w, b.h);
+        ctx.strokeStyle = 'rgba(100,140,200,0.45)';
+        ctx.lineWidth = 0.5;
+        for (let row = 0; row < b.h; row += 16) {
+          const offset = (Math.floor(row/16) % 2) * 16;
+          for (let col = offset; col < b.w; col += 32) {
+            ctx.strokeRect(b.x + col, b.y + row, 32, 16);
+          }
+        }
+      }
+    }
+
+    function drawRays() {
+      for (const ray of activeRays) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(ray.x1, ray.y1);
+        ctx.lineTo(ray.x2, ray.y2);
+        ctx.lineWidth = 2.5;
+        ctx.setLineDash(ray.hit ? [8,6] : [12,8]);
+        ctx.strokeStyle = ray.color;
+        ctx.shadowBlur = ray.hit ? 9 : 2;
+        ctx.shadowColor = ray.hit ? ray.color : 'transparent';
+        ctx.stroke();
+        if (ray.hit) {
+          ctx.setLineDash([]);
+          ctx.fillStyle = ray.color;
+          ctx.beginPath();
+          ctx.arc(ray.x2, ray.y2, 6, 0, Math.PI*2);
+          ctx.fill();
+          ctx.fillStyle = 'white';
+          ctx.font = 'bold 10px monospace';
+          ctx.shadowBlur = 2;
+          ctx.fillText(`${Math.floor(ray.dist)}`, ray.x2-12, ray.y2-5);
+        }
+        ctx.restore();
+      }
+    }
+
+    function drawPlayer() {
+      ctx.save();
+      const grad = ctx.createLinearGradient(PLAYER.x, PLAYER.y, PLAYER.x, PLAYER.y+PLAYER.h);
+      grad.addColorStop(0, '#8fe0ff');
+      grad.addColorStop(1, '#2a9fd6');
+      ctx.fillStyle = grad;
+      ctx.shadowBlur = 8;
+      ctx.shadowColor = '#5ac8ff';
+      ctx.beginPath();
+      ctx.roundRect(PLAYER.x, PLAYER.y, PLAYER.w, PLAYER.h, 7);
+      ctx.fill();
+      ctx.fillStyle = '#fff9e0';
+      ctx.fillRect(PLAYER.x+7, PLAYER.y+9, 6, 6);
+      ctx.fillRect(PLAYER.x+PLAYER.w-13, PLAYER.y+9, 6, 6);
+      ctx.fillStyle = '#1a2f4a';
+      ctx.fillRect(PLAYER.x+9, PLAYER.y+11, 2, 3);
+      ctx.fillRect(PLAYER.x+PLAYER.w-11, PLAYER.y+11, 2, 3);
+      
+      const now = performance.now();
+      const cdProgress = Math.min(1, (now - PLAYER.lastTeleportTime) / TELEPORT_COOLDOWN_MS);
+      ctx.fillStyle = '#000000aa';
+      ctx.fillRect(PLAYER.x + 2, PLAYER.y - 9, PLAYER.w - 4, 6);
+      ctx.fillStyle = cdProgress >= 1 ? '#6effa0' : '#ffaa60';
+      ctx.fillRect(PLAYER.x + 2, PLAYER.y - 9, (PLAYER.w - 4) * cdProgress, 5);
+      ctx.restore();
+    }
+
+    function drawParticles() {
+      for (const p of particles) {
+        ctx.save();
+        ctx.globalAlpha = p.life * 0.9;
+        ctx.fillStyle = p.color || '#ffbc70';
+        ctx.shadowBlur = 5;
+        ctx.shadowColor = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+
+    function drawBackground() {
+      ctx.fillStyle = '#0c1122';
+      ctx.fillRect(0, 0, W, H);
+      for (let i=0;i<W+20;i+=45){
+        ctx.beginPath();
+        ctx.strokeStyle = '#253555';
+        ctx.lineWidth = 0.6;
+        ctx.moveTo(i,0); ctx.lineTo(i,H); ctx.stroke();
+        ctx.moveTo(0,i%H); ctx.lineTo(W,i%H); ctx.stroke();
+      }
+    }
+
+    function resetPlayer() {
+      PLAYER.x = 700;
+      PLAYER.y = 420;
+      PLAYER.vx = 0;
+      PLAYER.vy = 0;
+      PLAYER.onGround = true;
+      PLAYER.lastTeleportTime = performance.now() - TELEPORT_COOLDOWN_MS;
+      spawnExplosionParticles(PLAYER.x+PLAYER.w/2, PLAYER.y+PLAYER.h/2, '#aae0ff');
+    }
+
+    // Настройка задержки через слайдер
+    const slider = document.getElementById('cooldownSlider');
+    const cdValueSpan = document.getElementById('cdValueUI');
+    function updateCooldown() {
+      TELEPORT_COOLDOWN_MS = parseInt(slider.value, 10);
+      cdValueSpan.innerText = TELEPORT_COOLDOWN_MS + " мс";
+      // Сбрасываем кулдаун, чтобы изменение вступило в силу без ожидания
+      PLAYER.lastTeleportTime = performance.now() - TELEPORT_COOLDOWN_MS;
+    }
+    slider.addEventListener('input', updateCooldown);
+    updateCooldown();
+
+    let lastTimestamp = 0;
+    function gameLoop(time) {
+      const dt = Math.min(1.6, (time - lastTimestamp) / 16);
+      lastTimestamp = time;
+
+      handleMovementAndPhysics();
+      updateTeleportAndRays();
+      updateParticles();
+      updateUI();
+
+      drawBackground();
+      drawBlocks();
+      drawRays();
+      drawPlayer();
+      drawParticles();
+      drawCooldownRainbowBar(); // новая радужная шкала прогресса
+
+      requestAnimationFrame(gameLoop);
+    }
+
+    resetPlayer();
+    requestAnimationFrame(gameLoop);
+  })();
+
+  if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+      if (w < 2 * r) r = w / 2;
+      if (h < 2 * r) r = h / 2;
+      this.moveTo(x+r, y);
+      this.lineTo(x+w-r, y);
+      this.quadraticCurveTo(x+w, y, x+w, y+r);
+      this.lineTo(x+w, y+h-r);
+      this.quadraticCurveTo(x+w, y+h, x+w-r, y+h);
+      this.lineTo(x+r, y+h);
+      this.quadraticCurveTo(x, y+h, x, y+h-r);
+      this.lineTo(x, y+r);
+      this.quadraticCurveTo(x, y, x+r, y);
+      return this;
+    };
+  }
+</script>
+</body>
+</html>
